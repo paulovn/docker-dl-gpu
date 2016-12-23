@@ -1,9 +1,15 @@
 from setuptools import setup
 import glob
+import os.path
+
+def pkg_version():
+    basedir = os.path.dirname( os.path.realpath(__file__) )
+    with open( os.path.join(basedir,'VERSION.txt'), 'r' ) as f:
+        return f.readline().strip()
 
 
 setup_args = dict( name="dl-utils",
-    version="0.0.1",
+    version=pkg_version(),
     author="Paulo Villegas",
     author_email="paulo.vllgs@gmail.com",
     
