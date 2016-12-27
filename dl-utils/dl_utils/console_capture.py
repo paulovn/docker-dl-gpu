@@ -6,24 +6,28 @@ with a running kernel all subsequent console output is lost
 Idea taken from
 http://stackoverflow.com/questions/29119657/ipython-notebook-keep-printing-to-notebook-output-after-closing-browser/29170902#29170902
 
-See also https://github.com/ipython/ipython/issues/4140
-and http://nbviewer.jupyter.org/gist/minrk/4563193
+See also
+ * https://github.com/ipython/ipython/issues/4140
+ * http://stackoverflow.com/questions/14393989/per-cell-output-for-threaded-ipython-notebooks and http://nbviewer.jupyter.org/gist/minrk/4563193
+ * https://gist.github.com/minrk/2347016
 '''
 
 from __future__ import print_function
+import os
 import sys
 import re
 import tempfile
-import os
 import threading
-from StringIO import StringIO
 from tempfile import mkstemp
 from time import sleep
+import io
 
 
-if sys.version[0] != '2':
-    basestring = str
+PY2 = sys.version[0] == '2'
+if not PY2:
     xrange = range
+    basestring = str
+    unicode = lambda msg, *args : msg
 
 _REAL_STDOUT = sys.stdout
 _REAL_STDERR = sys.stderr
@@ -52,13 +56,14 @@ class OutputDest( object ):
     A file-like object that can print both to stdout and to a file.
     """
 
-    def __init__(self, out=None, console=True):
+    def __init__(self, out=None, console=True, encoding='utf-8'):
         self._do_console = console
+        self._encoding = encoding
         self.console = _REAL_STDOUT
         if out is None:
-            self.log = StringIO()
+            self.log = io.StringIO()
         elif isinstance(out,basestring):
-            self.log = open(out,'w')
+            self.log = io.open(out,'w',newline='',encoding=encoding)
         else:
             self.log = out
 
@@ -73,12 +78,7 @@ class OutputDest( object ):
         self.close()
 
     def write(self, message):
-        #idx = message.find( '\m' )
-        #if idx:
-        #    message = message[idx:]
-        #while :
-        #    message = re.sub( r'[^\b][\b]', '' ) 
-        self.log.write(message)
+        self.log.write( unicode(message,self._encoding,'replace') )
         self.log.flush()
         if self._do_console:
             self.console.write(message)
@@ -108,18 +108,20 @@ class ConsoleCapture( object ):
         self._on = False
         self.fname = None
 
-    def start( self, console=True, name=None, dir=None ):
+    def start( self, console=True, name=None, dir=None, encoding=None ):
         """
         Start capturing console output into a file
          :param console: whether to also print out everything to console too
          :param name: base part of the filename (default is "notebook")
          :param dir: directory where to write the logfile (default is current)
+         :param encoding: charset encoding to use for the file
         """
         logname = '{}-'.format( name or 'notebook' )
         f, self.fname = mkstemp( prefix=logname, suffix='.log', 
                                  dir=dir or os.getcwd(), text=True )
-        self.log = OutputDest( os.fdopen(f,'w'), console )
+        self._enc = encoding
         self._on = True
+        self.log = OutputDest( io.open(f,'w',newline=''), console, encoding )
         self.log.__enter__()
 
     def stop( self ):
@@ -168,7 +170,7 @@ class ConsoleCapture( object ):
         Return the captured data
         """
         if self.fname:
-            with open(self.fname,'r') as f:
+            with io.open(self.fname,'r',newline='',encoding=self._enc) as f:
                 return f.read()
 
 # -------------------------------------------------------------------------
@@ -183,12 +185,13 @@ class ConsoleCaptureCtx( ConsoleCapture ):
       * `data` (available as a property) will return it
     '''
 
-    def __init__( self, verbose=True, name=None, logdir=None, delete=True ):
+    def __init__( self, verbose=True, name=None, logdir=None, encoding='utf-8',
+                  delete=True ):
         '''
         Create the context object
         '''
         self._lock = threading.RLock()
-        self._args = verbose, name, logdir
+        self._args = verbose, name, logdir, encoding
         self._result = None
         self._delete = delete
         super(ConsoleCapture,self).__init__()
@@ -203,6 +206,8 @@ class ConsoleCaptureCtx( ConsoleCapture ):
             self._result = super(ConsoleCaptureCtx,self).data
             if self._delete:
                 self.remove()
+            else:
+                self.stop()
 
     @property
     def data( self ):
@@ -219,10 +224,8 @@ class ConsoleCaptureCtx( ConsoleCapture ):
 
 class ThrStatus( object ):
     '''An enum-like object to hold the thread status'''
-    __slots__ = ('CREATED','RUNNING','CLOSING','ENDED','ABORTED','REAPED')
     CREATED,RUNNING,ENDED,ABORTED,REAPED = range(5)
     
-
 
 class ProcessingThread( threading.Thread ):
     '''
@@ -247,8 +250,8 @@ class ProcessingThread( threading.Thread ):
         self._st = ThrStatus.CREATED
         self._ctx = None
         self._kwargs = { 'verbose': True,
-                         'delete': True }
-
+                         'delete': True,
+                         'encoding' : 'utf-8' }
 
     def run(self):
         '''
@@ -266,14 +269,12 @@ class ProcessingThread( threading.Thread ):
                 raise
         self._st = ThrStatus.ENDED
 
-
     def set_args( self, **kwargs ):
         '''
         Set execution arguments
         '''
         self._kwargs.update( kwargs )
         return self._kwargs
-
 
     def close( self ):
         '''
@@ -283,14 +284,12 @@ class ProcessingThread( threading.Thread ):
             self.join()
             self._st = ThrStatus.REAPED
 
-
     @property
     def status(self):
         '''
         Return the processing thread running status
         '''
         return self._st
-
 
     @property
     def data(self):
@@ -299,14 +298,12 @@ class ProcessingThread( threading.Thread ):
         '''
         return self._ctx.data if self._st != ThrStatus.CREATED else None
 
-
     @property
     def logname(self):
         '''
         Return the name of the logfile
         '''
         return self._ctx.fname if self._st != ThrStatus.CREATED else None
-
 
     def reprint(self, **kwargs):
         '''
@@ -346,7 +343,8 @@ class ProcessWrap( object ):
             sleep( 0.01 )
         self.tproc.close()
 
-    def process( self, verbose=True, delete=True, logdir=None, block=True ):
+    def process( self, verbose=True, delete=True, logdir=None,
+                 encoding='utf-8', block=True ):
         '''
         Launch the process
          :param verbose: whether to also output to console
@@ -360,7 +358,8 @@ class ProcessWrap( object ):
         # Create the thread
         self.tproc = ProcessingThread( self._p[0], *self._p[1], **self._p[2] )
         # Set context arguments
-        self.tproc.set_args( verbose=verbose, delete=delete, logdir=logdir )
+        self.tproc.set_args( verbose=verbose, delete=delete, logdir=logdir,
+                             encoding=encoding )
         # Start the thread
         self.tproc.start()
         # Wait till the thread confirms it has started
@@ -369,7 +368,6 @@ class ProcessWrap( object ):
         # If blocking, wait until the thread finishes
         if block:
             self._block()
-
 
     def show( self, clean=False, block=False ):
         '''
@@ -395,70 +393,3 @@ class ProcessWrap( object ):
         Return the name of the logfile, or `None` if there isn't one
         '''
         return self.tproc.logname
-
-    # -------------------
-
-
-
-    def start( self, verbose=True, delete=True, block=True ):        
-        self.tproc = ProcessingThread( self._p[0], *self._p[1], **self._p[2] )
-        self.tproc.verbose( verbose ).delete( delete ).start()
-        while self.tproc.status == ThrStatus.CREATED:
-            sleep( 0.01 )
-
-    def show_( self ):
-        '''
-        Print out the output generated by the processing thread so far
-        '''
-        self.tproc.reprint()
-
-    def async_show( self, all=False, interval=1.0 ):
-        if self.tout:
-            self.tout.stop()
-        self.tout = OutputThread( self.tproc.fname, all, interval ) 
-        self.tout.start()
-
-    def async_stop( self ):
-        if self.tout:
-            self.tout.stop()
-
-
-
-# -------------------------------------------------------------------------
-
-class OutputThread( threading.Thread ):
-    '''
-    '''
-    def __init__( self, fname, all=True, interval=1.0 ):
-        super(OutputThread,self).__init__()
-        self._fname = fname
-        self._st = ThrStatus.CREATED
-        self._all = all
-        self._interval = interval
-        self._lock = threading.Lock()
-
-    def run( self ):
-        with self._lock:
-            self._st = ThrStatus.RUNNING
-        with open( self._fname, 'r' ) as f:
-            if not self._all:
-                f.seek(0,2)
-            while self._on == ThrStatus.RUNNING:
-                l = f.readline()
-                if l:
-                    _REAL_STDOUT.write( l )
-                if self._st == ThrStatus.RUNNING:
-                    sleep( self._interval )
-        with self._lock:
-            self._st = ThrStatus.ENDED
-        
-
-    def stop( self ):
-        '''
-        Tell the ouput thread to stop
-        '''
-        with self._lock:
-            self._st = ThrStatus.CLOSING
-        self.join()
-
-
