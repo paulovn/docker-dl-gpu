@@ -66,6 +66,10 @@ def pred_show( pred, truth=None ):
 # ----------------------------------------------------------------------
 
 def model_compare( m1, m2 ):
+    '''
+    Compare the weights in two models (the two models are assumed to have the
+    same architecture)
+    '''
     print( "Comparing weights in model layers:" )
     i = 0
     for l1, l2 in zip(m1.layers,m2.layers):
@@ -101,24 +105,21 @@ def wrapper_decorator(orig_update):
 
 def wrapper_init(orig):
     """
+    A decorator for the progress bar constructor, to increase the update interval
+    to 1 sec (and thus reduce the amount of information generated)
     """
     def wrapped_init(self,target,**kwargs):
-        kwargs['interval'] = 1.0
+        kwargs['interval'] = 1
         orig(self,target,**kwargs)
 
     return wrapped_init
 
 
+# Monkey-patch the constructor in the Progbar class to use 1-sec update intervals
 import keras.utils.generic_utils as kgutils
+kgutils.Progbar.__init__ = wrapper_init(kgutils.Progbar.__init__)
+
 #kgutils.Progbar.update = wrapper_decorator(kgutils.Progbar.update)
-from persistent_print import capture_print, reprint
-
-
-def patch_progbar():
-    # Monkey-patch the method in the Progbar class
-    kgutils.Progbar.__init__ = wrapper_init(kgutils.Progbar.__init__)
-    capture_print( kgutils )
 
 
 # ----------------------------------------------------------------------
-#http://stackoverflow.com/questions/29119657/ipython-notebook-keep-printing-to-notebook-output-after-closing-browser/29170902#29170902
