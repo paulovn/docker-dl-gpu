@@ -29,7 +29,7 @@ setup_args = dict( name="dl-utils",
     install_requires = [ 'setuptools',
     ],
 
-    packages=[ "dl_utils" ],
+    packages=[ "dl_utils", "dl_utils.krs" ],
 
     include_package_data = False,       # otherwise package_data is not used
 )
