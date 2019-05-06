@@ -23,6 +23,6 @@ uninstall:
 
 # -----------------------------------------------------------------------
 
-$(PKG):  $(VERSION_FILE)
+$(PKG):  $(VERSION_FILE) setup.py
 	python setup.py sdist
 
