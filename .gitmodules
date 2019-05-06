@@ -1,0 +1,4 @@
+[submodule "dl-helper"]
+	path = dl-helper
+	url = git@github.com:paulovn/dl-helper.git
+	branch = master
